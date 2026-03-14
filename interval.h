@@ -3,18 +3,25 @@
 
 class interval {
   public:
-    fixed8 min, max;
+    double min, max;
 
-    interval() : min(fp_infinity), max(-fp_infinity) {}
-    interval(fixed8 mn, fixed8 mx) : min(mn), max(mx) {}
-    interval(double mn, double mx) : min(fixed8(mn)), max(fixed8(mx)) {}
+    interval() : min(+infinity), max(-infinity) {} // Default interval is empty
 
-    fixed8 size() const { return max - min; }
+    interval(double min, double max) : min(min), max(max) {}
 
-    bool contains(fixed8 x) const { return min <= x && x <= max; }
-    bool surrounds(fixed8 x) const { return min < x && x < max; }
+    double size() const {
+        return max - min;
+    }
 
-    fixed8 clamp(fixed8 x) const {
+    bool contains(double x) const {
+        return min <= x && x <= max;
+    }
+
+    bool surrounds(double x) const {
+        return min < x && x < max;
+    }
+
+    double clamp(double x) const {
         if (x < min) return min;
         if (x > max) return max;
         return x;
@@ -23,7 +30,7 @@ class interval {
     static const interval empty, universe;
 };
 
-const interval interval::empty    = interval(fp_infinity, -fp_infinity);
-const interval interval::universe = interval(-fp_infinity, fp_infinity);
+const interval interval::empty    = interval(+infinity, -infinity);
+const interval interval::universe = interval(-infinity, +infinity);
 
 #endif

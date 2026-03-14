@@ -6,19 +6,15 @@
 
 class camera {
   public:
-    double aspect_ratio      = 1.0;
-    int    image_width       = 100;
-    int    samples_per_pixel = 10;
-    int    max_depth         = 10;
+    double aspect_ratio = 1.0;  // Ratio of image width over height
+    int    image_width  = 100;  // Rendered image width in pixel count
+    int    samples_per_pixel = 10;   // Count of random samples for each pixel
+    int    max_depth         = 10;   // Maximum number of ray bounces into scene
 
-    double vfov     = 90;
-    double lookfrom_d[3] = {0, 0, 0};
-    double lookat_d[3]   = {0, 0, -1};
-    double vup_d[3]      = {0, 1, 0};
-
-    void set_lookfrom(double x, double y, double z) { lookfrom_d[0]=x; lookfrom_d[1]=y; lookfrom_d[2]=z; }
-    void set_lookat(double x, double y, double z)   { lookat_d[0]=x;   lookat_d[1]=y;   lookat_d[2]=z; }
-    void set_vup(double x, double y, double z)      { vup_d[0]=x;      vup_d[1]=y;      vup_d[2]=z; }
+    double vfov = 90;  // Vertical view angle (field of view)
+    point3 lookfrom = point3(0,0,0);   // Point camera is looking from
+    point3 lookat   = point3(0,0,-1);  // Point camera is looking at
+    vec3   vup      = vec3(0,1,0);     // Camera-relative "up" direction
 
     void render(const hittable& world) {
         initialize();
@@ -28,23 +24,12 @@ class camera {
         for (int j = 0; j < image_height; j++) {
             std::clog << "\rScanlines remaining: " << (image_height - j) << ' ' << std::flush;
             for (int i = 0; i < image_width; i++) {
-                // Accumulate in 16-bit to avoid overflow, then average.
-                // In hardware this would be a wider accumulator register.
-                int16_t acc_r = 0, acc_g = 0, acc_b = 0;
+                color pixel_color(0,0,0);
                 for (int sample = 0; sample < samples_per_pixel; sample++) {
                     ray r = get_ray(i, j);
-                    color c = ray_color(r, max_depth, world);
-                    acc_r += c.x().raw;
-                    acc_g += c.y().raw;
-                    acc_b += c.z().raw;
+                    pixel_color += ray_color(r, max_depth, world);
                 }
-                // Divide by sample count in 16-bit, then truncate back to fixed8
-                color pixel_color(
-                    fixed8::from_raw(static_cast<int8_t>((acc_r / samples_per_pixel) & 0xFF)),
-                    fixed8::from_raw(static_cast<int8_t>((acc_g / samples_per_pixel) & 0xFF)),
-                    fixed8::from_raw(static_cast<int8_t>((acc_b / samples_per_pixel) & 0xFF))
-                );
-                write_color(std::cout, pixel_color);
+                write_color(std::cout, pixel_samples_scale * pixel_color);
             }
         }
 
@@ -52,104 +37,84 @@ class camera {
     }
 
   private:
-    int    image_height;
-    fixed8 pixel_samples_scale;
-
-    // Camera setup stored in double — ray generation is the "host side"
-    // that feeds normalized direction vectors into the fixed8 pipeline.
-    double d_center[3];
-    double d_pixel00[3];
-    double d_delta_u[3];
-    double d_delta_v[3];
+    int    image_height;   // Rendered image height
+    double pixel_samples_scale;  // Color scale factor for a sum of pixel samples
+    point3 center;         // Camera center
+    point3 pixel00_loc;    // Location of pixel 0, 0
+    vec3   pixel_delta_u;  // Offset to pixel to the right
+    vec3   pixel_delta_v;  // Offset to pixel below
+    vec3   u, v, w;              // Camera frame basis vectors
 
     void initialize() {
         image_height = int(image_width / aspect_ratio);
         image_height = (image_height < 1) ? 1 : image_height;
 
-        pixel_samples_scale = fixed8(1.0 / samples_per_pixel);
+        pixel_samples_scale = 1.0 / samples_per_pixel;
 
-        double cx = lookfrom_d[0], cy = lookfrom_d[1], cz = lookfrom_d[2];
-        double lx = lookat_d[0],  ly = lookat_d[1],  lz = lookat_d[2];
-        double ux = vup_d[0],     uy = vup_d[1],     uz = vup_d[2];
+        center = lookfrom;
 
-        d_center[0] = cx; d_center[1] = cy; d_center[2] = cz;
+        // Determine viewport dimensions.
+        auto focal_length = (lookfrom - lookat).length();
+        auto theta = degrees_to_radians(vfov);
+        auto h = std::tan(theta/2);
+        auto viewport_height = 2 * h * focal_length;
+        auto viewport_width = viewport_height * (double(image_width)/image_height);
 
-        double dx = cx-lx, dy = cy-ly, dz = cz-lz;
-        double focal_length = std::sqrt(dx*dx + dy*dy + dz*dz);
-        double theta = degrees_to_radians(vfov);
-        double h = std::tan(theta / 2);
-        double viewport_height = 2.0 * h * focal_length;
-        double viewport_width = viewport_height * (double(image_width) / image_height);
+        // Calculate the u,v,w unit basis vectors for the camera coordinate frame.
+        w = unit_vector(lookfrom - lookat);
+        u = unit_vector(cross(vup, w));
+        v = cross(w, u);
 
-        double wlen = std::sqrt(dx*dx + dy*dy + dz*dz);
-        double wx = dx/wlen, wy = dy/wlen, wz = dz/wlen;
+        // Calculate the vectors across the horizontal and down the vertical viewport edges.
+        vec3 viewport_u = viewport_width * u;    // Vector across viewport horizontal edge
+        vec3 viewport_v = viewport_height * -v;  // Vector down viewport vertical edge
 
-        double ucx = uy*wz - uz*wy, ucy = uz*wx - ux*wz, ucz = ux*wy - uy*wx;
-        double ulen = std::sqrt(ucx*ucx + ucy*ucy + ucz*ucz);
-        double uux = ucx/ulen, uuy = ucy/ulen, uuz = ucz/ulen;
+        // Calculate the horizontal and vertical delta vectors from pixel to pixel.
+        pixel_delta_u = viewport_u / image_width;
+        pixel_delta_v = viewport_v / image_height;
 
-        double vvx = wy*uuz - wz*uuy, vvy = wz*uux - wx*uuz, vvz = wx*uuy - wy*uux;
-
-        double vp_ux = viewport_width * uux, vp_uy = viewport_width * uuy, vp_uz = viewport_width * uuz;
-        double vp_vx = viewport_height * -vvx, vp_vy = viewport_height * -vvy, vp_vz = viewport_height * -vvz;
-
-        d_delta_u[0] = vp_ux/image_width;  d_delta_u[1] = vp_uy/image_width;  d_delta_u[2] = vp_uz/image_width;
-        d_delta_v[0] = vp_vx/image_height; d_delta_v[1] = vp_vy/image_height; d_delta_v[2] = vp_vz/image_height;
-
-        double ul_x = cx - focal_length*wx - vp_ux/2 - vp_vx/2;
-        double ul_y = cy - focal_length*wy - vp_uy/2 - vp_vy/2;
-        double ul_z = cz - focal_length*wz - vp_uz/2 - vp_vz/2;
-
-        d_pixel00[0] = ul_x + 0.5*(d_delta_u[0] + d_delta_v[0]);
-        d_pixel00[1] = ul_y + 0.5*(d_delta_u[1] + d_delta_v[1]);
-        d_pixel00[2] = ul_z + 0.5*(d_delta_u[2] + d_delta_v[2]);
+        // Calculate the location of the upper left pixel.
+        auto viewport_upper_left = center - (focal_length * w) - viewport_u/2 - viewport_v/2;
+        pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v);
     }
 
-    // Ray generation: compute direction in double, normalize, then convert to fixed8.
-    // This models a hardware design where the host precomputes or a dedicated unit
-    // generates ray directions at higher precision, feeding the fixed8 intersection pipeline.
     ray get_ray(int i, int j) const {
-        double ox = random_double() - 0.5;
-        double oy = random_double() - 0.5;
+        // Construct a camera ray originating from the origin and directed at randomly sampled
+        // point around the pixel location i, j.
 
-        double px = d_pixel00[0] + (i + ox)*d_delta_u[0] + (j + oy)*d_delta_v[0];
-        double py = d_pixel00[1] + (i + ox)*d_delta_u[1] + (j + oy)*d_delta_v[1];
-        double pz = d_pixel00[2] + (i + ox)*d_delta_u[2] + (j + oy)*d_delta_v[2];
+        auto offset = sample_square();
+        auto pixel_sample = pixel00_loc
+                          + ((i + offset.x()) * pixel_delta_u)
+                          + ((j + offset.y()) * pixel_delta_v);
 
-        double rdx = px - d_center[0];
-        double rdy = py - d_center[1];
-        double rdz = pz - d_center[2];
-
-        // Normalize direction in double, then quantize to fixed8
-        double rlen = std::sqrt(rdx*rdx + rdy*rdy + rdz*rdz);
-        rdx /= rlen; rdy /= rlen; rdz /= rlen;
-
-        // Origin and direction converted to fixed8 — from here, all math is 8-bit
-        point3 ray_origin(d_center[0], d_center[1], d_center[2]);
-        vec3 ray_direction(rdx, rdy, rdz);
+        auto ray_origin = center;
+        auto ray_direction = pixel_sample - ray_origin;
 
         return ray(ray_origin, ray_direction);
     }
 
-    color ray_color(const ray& r, int depth, const hittable& world) const {
-        if (depth <= 0)
-            return color(0, 0, 0);
+    vec3 sample_square() const {
+        // Returns the vector to a random point in the [-.5,-.5]-[+.5,+.5] unit square.
+        return vec3(random_double() - 0.5, random_double() - 0.5, 0);
+    }
 
+    color ray_color(const ray& r, int depth, const hittable& world) const {
+        // If we've exceeded the ray bounce limit, no more light is gathered.
+        if (depth <= 0)
+            return color(0,0,0);
         hit_record rec;
 
-        if (world.hit(r, interval(0.0625, 7.9375), rec)) {
+        if (world.hit(r, interval(0.001, infinity), rec)) {
             ray scattered;
             color attenuation;
             if (rec.mat->scatter(r, rec, attenuation, scattered))
                 return attenuation * ray_color(scattered, depth-1, world);
-            return color(0, 0, 0);
+            return color(0,0,0);
         }
 
-        // Sky gradient
         vec3 unit_direction = unit_vector(r.direction());
-        auto a = fixed8(0.5) * (unit_direction.y() + fixed8(1.0));
-        auto one_minus_a = fixed8(1.0) - a;
-        return one_minus_a * color(1.0, 1.0, 1.0) + a * color(0.5, 0.6875, 1.0);
+        auto a = 0.5*(unit_direction.y() + 1.0);
+        return (1.0-a)*color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
     }
 };
 
