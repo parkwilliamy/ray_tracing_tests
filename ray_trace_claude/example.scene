@@ -1,0 +1,61 @@
+# =============================================================================
+# example.scene — Sample scene for the configurable ray tracer
+# =============================================================================
+# This scene demonstrates all supported material types and both primitives.
+#
+# Material definitions must come before the objects that reference them.
+# Format:
+#   material lambertian <name> <r> <g> <b>
+#   material metal <name> <r> <g> <b> <fuzz>
+#   material dielectric <name> <ior>
+#
+# Primitives:
+#   sphere <cx> <cy> <cz> <radius> <material_name>
+#   triangle <x0> <y0> <z0>  <x1> <y1> <z1>  <x2> <y2> <z2>  <material_name>
+# =============================================================================
+
+# --- Materials ---
+
+# Ground plane: yellowish diffuse
+material lambertian ground 0.8 0.8 0.0
+
+# Center sphere: blue diffuse
+material lambertian blue_matte 0.1 0.2 0.5
+
+# Left sphere: glass (index of refraction 1.5)
+material dielectric glass 1.5
+
+# Right sphere: gold mirror (fuzz = 0 for perfect mirror)
+material metal gold_mirror 0.8 0.6 0.2 0.0
+
+# Brushed copper (fuzz = 0.3 for blurry reflection)
+material metal brushed_copper 0.7 0.3 0.2 0.3
+
+# Red diffuse for triangle
+material lambertian red_matte 0.9 0.15 0.15
+
+# Green diffuse for triangle
+material lambertian green_matte 0.2 0.8 0.2
+
+# --- Objects ---
+
+# Ground: very large sphere acts as a flat plane
+sphere 0.0 -100.5 -1.0 100.0 ground
+
+# Three main spheres (classic RTiOW arrangement)
+sphere  0.0  0.0 -1.0  0.5  blue_matte
+sphere -1.0  0.0 -1.0  0.5  glass
+sphere  1.0  0.0 -1.0  0.5  gold_mirror
+
+# Hollow glass effect: negative radius sphere inside the glass sphere
+# This creates a thin shell that refracts light correctly
+sphere -1.0  0.0 -1.0 -0.4  glass
+
+# Small brushed copper sphere in the background
+sphere  0.5  -0.3 -0.5  0.2  brushed_copper
+
+# Red triangle floating above center (demonstrates triangle primitive)
+triangle -0.3 0.7 -0.8  0.3 0.7 -0.8  0.0 1.2 -1.0  red_matte
+
+# Green triangle on the ground
+triangle -1.5 -0.49 -0.5  -0.5 -0.49 -0.5  -1.0 -0.49 -1.5  green_matte
